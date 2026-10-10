@@ -1,0 +1,110 @@
+import requests
+import sqlite3
+from datetime import datetime
+from colorama import Fore, Style, init
+init(autoreset=True)
+
+conn = sqlite3.connect("steam_games.db")
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS games (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    appid INTEGER,
+    price REAL,
+    budget REAL,
+    date_time TEXT
+)
+""")
+conn.commit()
+def find_game(game_name):
+
+    url = "https://store.steampowered.com/api/storesearch/"
+    params = {
+        "term": game_name,
+        "l": "en",
+        "cc": "us"
+    }
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("items"):
+        return None
+
+    game = data["items"][0]
+    appid = game["id"]
+    url = "https://store.steampowered.com/api/appdetails/"
+    params = {
+        "appids": appid,
+        "cc": "us",
+        "l": "en"
+    }
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    details = response.json()[str(appid)]
+    if not details.get("success"):
+        return None
+    info = details["data"]
+    if info.get("is_free"):
+        price = 0.0
+    else:
+        price_info = info.get("price_overview")
+        if not price_info:
+            return None
+
+        price = price_info["final"] / 100
+    return {
+        "name": info["name"],
+        "appid": appid,
+        "price": price
+    }
+def main():
+    try:
+        budget = float(input("Ваш бюджет в долларах США: "))
+        if budget < 0:
+            print(Fore.RED + "Бюджет не може бути негативним")
+            return
+        game_name = input("Назва гри: ")
+        if not game_name.strip():
+            print(Fore.RED + "НАЗВУ ГРИ")
+            return
+        game = find_game(game_name)
+        if game is None:
+            print(Fore.RED + "Гри не існує")
+            return
+        price = game["price"]
+        print("\nГра:", game["name"])
+        print(f"Ціна: ${price:.2f}")
+        print(f"Ваш бюджет: ${budget:.2f}")
+        if price <= budget:
+            print(Fore.GREEN + "Ви можете купити цю гру")
+        else:
+            print(Fore.RED + "Ви не можете купити ую гру")
+            print(f"Вам ще потрібно ${price - budget:.2f}.")
+
+        answer = input("\nЗберегти гру у БД? (y/n): ")
+        if answer.lower() == "y":
+            date_time = datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            cursor.execute("""
+                INSERT INTO games
+                (name, appid, price, budget, date_time)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                game["name"],
+                game["appid"],
+                price,
+                budget,
+                date_time
+            ))
+            conn.commit()
+            print(Fore.GREEN + "Гру завантажено!")
+    except ValueError:
+        print(Fore.RED + "Напишіть номер")
+    except requests.RequestException as error:
+        print(Fore.RED + "Помилка з звязком стім:", error)
+    finally:
+        conn.close()
+if __name__ == "__main__":
+    main()
